@@ -85,7 +85,6 @@ SQLReader <- function(data.file, filename, variable.name)
   # dbname: /path/to/sample_database
   # table: sample_table
   
-  
   database.info <- yaml.load_file(filename)
   
   if (! (database.info[['type']] %in% c('mysql', 'sqlite')))
@@ -93,69 +92,80 @@ SQLReader <- function(data.file, filename, variable.name)
     warning('Only databases reachable through RMySQL and RSQLite
              are currently supported.')
     assign(variable.name,
-  	       NULL,
-  	       envir = .GlobalEnv)
-	 	return()
+           NULL,
+           envir = .GlobalEnv)
+    return()
   }
   
-  if (database.info[['type']] == 'mysql') {
+  if (database.info[['type']] == 'mysql')
+  {
     library('RMySQL')
-  mysql.driver <- dbDriver("MySQL")
+    mysql.driver <- dbDriver("MySQL")
   
-  connection <- dbConnect(mysql.driver,
-                          user = database.info[['user']],
-                          password = database.info[['password']],
-                          host = database.info[['host']],
-                          dbname = database.info[['dbname']])
+    connection <- dbConnect(mysql.driver,
+                            user = database.info[['user']],
+                            password = database.info[['password']],
+                            host = database.info[['host']],
+                            dbname = database.info[['dbname']])
   }
 
-  if (database.info[['type']] == 'sqlite') {
+  if (database.info[['type']] == 'sqlite')
+  {
     library('RSQLite')
     sqlite.driver <- dbDriver("SQLite")
     connection <- dbConnect(sqlite.driver,
                             dbname=database.info[['dbname']])
   }
-  
-  sql <- paste("SELECT * FROM `", database.info[['table']], "`", sep = '')
-  
-  result.set <- dbSendQuery(connection, sql)
-	
-	parcel.size <- 1000
-	
-  data.parcel <- fetch(result.set,
-                       n = parcel.size)
-  
-	if (nrow(data.parcel) == 0)
-	{
-	 	assign(variable.name,
-  	       NULL,
-  	       envir = .GlobalEnv)
-  	return()
-	}
-	
-	assign(variable.name,
-	       data.parcel,
-	       envir = .GlobalEnv)
-	
-  while (! dbHasCompleted(result.set))
+
+  if (is.null(database.info[['parcelsize']]) ||
+      database.info[['parcelsize']] < 1)
   {
-    data.parcel <- fetch(result.set, n = parcel.size)
-    
-    if (nrow(data.parcel) > 0)
+    assign(variable.name,
+           dbReadTable(connection, database.info[['table']], row.names=NULL),
+           envir = .GlobalEnv)
+  } else {
+    sql <- paste("SELECT * FROM `", database.info[['table']], "`", sep = '')
+  
+    result.set <- dbSendQuery(connection, sql)
+	
+    parcel.size <- database.info[['parcelsize']]
+	
+    data.parcel <- fetch(result.set,
+                         n = parcel.size)
+  
+    if (nrow(data.parcel) == 0)
     {
       assign(variable.name,
-             rbind(get(variable.name,
-                       envir = .GlobalEnv),
-                   data.parcel),
+             NULL,
              envir = .GlobalEnv)
+      return()
+    }
+	
+    assign(variable.name,
+           data.parcel,
+           envir = .GlobalEnv)
+	
+    while (! dbHasCompleted(result.set))
+    {
+      data.parcel <- fetch(result.set, n = parcel.size)
+    
+      if (nrow(data.parcel) > 0)
+      {
+        assign(variable.name,
+               rbind(get(variable.name,
+                         envir = .GlobalEnv),
+                     data.parcel),
+               envir = .GlobalEnv)
+      }
+    }
+    # Free up database query resources. Warn if failure.
+    clearResult.success <- dbClearResult(result.set)
+    if (! clearResult.success) {
+      warning(paste('Unable to clear result set from table:',
+                    database.info[['table']]))
     }
   }
-  # Free up and disconnect from database resources. Warn if either fails.
-  clearResult.success <- dbClearResult(result.set)
-  if (! clearResult.success) {
-    warning(paste('Unable to clear result set from table:',
-                  database.info[['table']]))
-  }
+  # Disconnect from database resources. Warn if failure.
   disconnect.success <- dbDisconnect(connection)
   if (! disconnect.success) {
     warning(paste('Unable to disconnect database:',
